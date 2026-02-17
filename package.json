@@ -1,0 +1,57 @@
+{
+  "name": "agent-trust-gateway",
+  "version": "0.1.0",
+  "description": "ERC-8004 Agent Trust Gateway - Trust scoring and validation for the agentic economy",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wgopar/a2a-x402-agent-template.git"
+  },
+  "homepage": "https://github.com/wgopar/a2a-x402-agent-template#readme",
+  "keywords": [
+    "a2a",
+    "x402",
+    "erc-8004",
+    "agent",
+    "hono",
+    "payments",
+    "web3",
+    "lambda"
+  ],
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "create-wallet": "tsx scripts/create-wallet.ts",
+    "register": "tsx scripts/register-identity.ts",
+    "test": "vitest run",
+    "lint": "tsc --noEmit",
+    "build:lambda": "docker build --target lambda -t a2a-agent:latest .",
+    "deploy": "bash scripts/deploy.sh"
+  },
+  "dependencies": {
+    "@a2a-js/sdk": "^0.3.0",
+    "@agentic-trust/8004-sdk": "^1.0.41",
+    "@hono/node-server": "^1.14.0",
+    "@x402/core": "^2.3.0",
+    "@x402/evm": "^2.3.0",
+    "@x402/hono": "^2.3.0",
+    "agent0-sdk": "^1.5.0",
+    "dotenv": "^16.4.0",
+    "erc-8004-js": "^2.0.1",
+    "hono": "^4.7.0",
+    "uuid": "^11.0.0",
+    "viem": "^2.0.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.990.0",
+    "@types/node": "^22.0.0",
+    "@types/uuid": "^10.0.0",
+    "esbuild": "^0.24.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

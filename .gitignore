@@ -1,0 +1,21 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Claude
+.claude/
+CLAUDE.md
+spec.md
+
+# Terraform
+infra/.terraform/
+infra/*.tfstate*
+infra/.terraform.lock.hcl
+infra/terraform.tfvars
