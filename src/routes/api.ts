@@ -40,6 +40,55 @@ const CHAINS: Record<string, { chain: Chain; rpc: string; identityRegistry: Addr
 
 const DEFAULT_CHAIN = "base";
 
+// Registration file type (matches ERC-8004 spec)
+interface RegistrationFile {
+  type?: string;
+  name: string;
+  description: string;
+  image?: string;
+  endpoints?: Array<{ name: string; endpoint: string; version?: string }>;
+  registrations?: Array<{ agentId: number | null; agentRegistry: string }>;
+  supportedTrust?: string[];
+  active?: boolean;
+  x402Support?: boolean;
+}
+
+// Helper to parse data: URIs (base64 JSON)
+function parseDataUri(uri: string): Record<string, unknown> | null {
+  const match = uri.match(/^data:application\/json;base64,(.+)$/);
+  if (!match) return null;
+  try {
+    const decoded = Buffer.from(match[1], "base64").toString("utf-8");
+    return JSON.parse(decoded);
+  } catch {
+    return null;
+  }
+}
+
+// Helper to fetch registration file (handles data: URIs)
+async function fetchRegistrationFile(identity: IdentityClient, agentId: bigint): Promise<RegistrationFile> {
+  const tokenUri = await identity.getTokenURI(agentId);
+  
+  // Handle data: URI
+  const dataUriResult = parseDataUri(tokenUri);
+  if (dataUriResult) {
+    return dataUriResult as unknown as RegistrationFile;
+  }
+  
+  // Handle IPFS or HTTPS
+  let fetchUrl = tokenUri;
+  if (tokenUri.startsWith("ipfs://")) {
+    const cid = tokenUri.replace("ipfs://", "");
+    fetchUrl = `https://ipfs.io/ipfs/${cid}`;
+  }
+  
+  const response = await fetch(fetchUrl);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch registration file: ${response.status}`);
+  }
+  return response.json() as Promise<RegistrationFile>;
+}
+
 // Helper to create clients
 function createClients(chainName: string = DEFAULT_CHAIN) {
   const config = CHAINS[chainName] || CHAINS[DEFAULT_CHAIN];
@@ -99,8 +148,8 @@ api.get("/agent/:id/profile", async (c) => {
     const agentId = BigInt(agentIdParam);
     const { identity } = createClients(chain);
     
-    // Get registration file
-    const registrationFile = await identity.getRegistrationFile(agentId);
+    // Get registration file (with data: URI support)
+    const registrationFile = await fetchRegistrationFile(identity, agentId);
     
     // Get owner
     const owner = await identity.getOwner(agentId);
@@ -155,7 +204,7 @@ api.post("/agent/profile/invoke", async (c) => {
   
   try {
     const { identity } = createClients(chain);
-    const registrationFile = await identity.getRegistrationFile(agentId);
+    const registrationFile = await fetchRegistrationFile(identity, agentId);
     const owner = await identity.getOwner(agentId);
     
     let wallet: string | null = null;
@@ -209,7 +258,7 @@ api.post("/agent/score/invoke", async (c) => {
     const { identity, reputation } = createClients(chain);
     
     // Get basic profile info
-    const registrationFile = await identity.getRegistrationFile(agentId);
+    const registrationFile = await fetchRegistrationFile(identity, agentId);
     const owner = await identity.getOwner(agentId);
     
     // Get reputation summary
@@ -297,7 +346,7 @@ api.post("/agent/validate/invoke", async (c) => {
     const { identity, reputation } = createClients(chain);
     
     // Get profile
-    const registrationFile = await identity.getRegistrationFile(agentId);
+    const registrationFile = await fetchRegistrationFile(identity, agentId);
     const owner = await identity.getOwner(agentId);
     
     const validationReport: {
