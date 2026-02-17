@@ -22,7 +22,7 @@ rpc_url = "https://sepolia.base.org"
 # agent_icon_url      = ""
 
 # ─── Optional ──────────────────────────────────────────────────────
-# aws_region        = "us-east-1"
+# aws_region        = "us-west-2"  # Default region for all Port402 agents
 # memory_size       = 256
 # agent_name        = "Hello Agent"
 # agent_description = "A simple Hello World agent"
