@@ -111,18 +111,25 @@ function createClients(chainName: string = DEFAULT_CHAIN) {
 }
 
 // Input schemas
+const agentIdSchema = z
+  .union([
+    z.string().regex(/^\d+$/, "agentId must be a non-negative integer string"),
+    z.number().int().nonnegative(),
+  ])
+  .transform((v) => BigInt(v));
+
 const profileInputSchema = z.object({
-  agentId: z.union([z.string(), z.number()]).transform((v) => BigInt(v)),
+  agentId: agentIdSchema,
   chain: z.string().optional().default(DEFAULT_CHAIN),
 });
 
 const scoreInputSchema = z.object({
-  agentId: z.union([z.string(), z.number()]).transform((v) => BigInt(v)),
+  agentId: agentIdSchema,
   chain: z.string().optional().default(DEFAULT_CHAIN),
 });
 
 const validateInputSchema = z.object({
-  agentId: z.union([z.string(), z.number()]).transform((v) => BigInt(v)),
+  agentId: agentIdSchema,
   chain: z.string().optional().default(DEFAULT_CHAIN),
   checks: z.array(z.enum(["endpoints", "wallet", "attestations"])).optional().default(["endpoints", "wallet"]),
 });
@@ -131,6 +138,31 @@ const validateInputSchema = z.object({
 const invokeEnvelopeSchema = z.object({
   input: z.any(),
 });
+
+function errorBody(error: string, details?: unknown) {
+  return details === undefined ? { error } : { error, details };
+}
+
+function badRequest(c: { json: (body: unknown, status?: number) => Response }, error: string, details?: unknown) {
+  return c.json(errorBody(error, details), 400);
+}
+
+function internalError(c: { json: (body: unknown, status?: number) => Response }, error: string, details?: unknown) {
+  return c.json(errorBody(error, details), 500);
+}
+
+function parseAgentIdParam(agentIdParam: string) {
+  const parsed = z.string().regex(/^\d+$/, "agentId must be a non-negative integer string").safeParse(agentIdParam);
+  if (!parsed.success) {
+    return { ok: false as const, details: parsed.error.flatten() };
+  }
+
+  try {
+    return { ok: true as const, value: BigInt(parsed.data) };
+  } catch {
+    return { ok: false as const, details: "agentId is out of range" };
+  }
+}
 
 const api = new Hono();
 
@@ -145,9 +177,14 @@ api.get("/health", (c) => c.json({ ok: true, service: "agent-trust-gateway" }));
 api.get("/agent/:id/profile", async (c) => {
   const agentIdParam = c.req.param("id");
   const chain = c.req.query("chain") || DEFAULT_CHAIN;
-  
+
+  const parsedAgentId = parseAgentIdParam(agentIdParam);
+  if (!parsedAgentId.ok) {
+    return badRequest(c, "Invalid agentId", parsedAgentId.details);
+  }
+
   try {
-    const agentId = BigInt(agentIdParam);
+    const agentId = parsedAgentId.value;
     const { identity } = createClients(chain);
     
     // Get registration file (with data: URI support)
@@ -180,7 +217,7 @@ api.get("/agent/:id/profile", async (c) => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
-    return c.json({ error: "Failed to fetch agent profile", details: message }, 500);
+    return internalError(c, "Failed to fetch agent profile", message);
   }
 });
 
@@ -194,12 +231,12 @@ api.post("/agent/profile/invoke", async (c) => {
   const envelope = invokeEnvelopeSchema.safeParse(body);
   
   if (!envelope.success) {
-    return c.json({ error: "Invalid request body", details: envelope.error.flatten() }, 400);
+    return badRequest(c, "Invalid request body", envelope.error.flatten());
   }
-  
+
   const parsed = profileInputSchema.safeParse(envelope.data.input);
   if (!parsed.success) {
-    return c.json({ error: "Invalid input", details: parsed.error.flatten() }, 400);
+    return badRequest(c, "Invalid input", parsed.error.flatten());
   }
   
   const { agentId, chain } = parsed.data;
@@ -232,7 +269,7 @@ api.post("/agent/profile/invoke", async (c) => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
-    return c.json({ error: "Failed to fetch agent profile", details: message }, 500);
+    return internalError(c, "Failed to fetch agent profile", message);
   }
 });
 
@@ -246,12 +283,12 @@ api.post("/agent/score/invoke", async (c) => {
   const envelope = invokeEnvelopeSchema.safeParse(body);
   
   if (!envelope.success) {
-    return c.json({ error: "Invalid request body", details: envelope.error.flatten() }, 400);
+    return badRequest(c, "Invalid request body", envelope.error.flatten());
   }
-  
+
   const parsed = scoreInputSchema.safeParse(envelope.data.input);
   if (!parsed.success) {
-    return c.json({ error: "Invalid input", details: parsed.error.flatten() }, 400);
+    return badRequest(c, "Invalid input", parsed.error.flatten());
   }
   
   const { agentId, chain } = parsed.data;
@@ -320,7 +357,7 @@ api.post("/agent/score/invoke", async (c) => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
-    return c.json({ error: "Failed to compute trust score", details: message }, 500);
+    return internalError(c, "Failed to compute trust score", message);
   }
 });
 
@@ -334,12 +371,12 @@ api.post("/agent/validate/invoke", async (c) => {
   const envelope = invokeEnvelopeSchema.safeParse(body);
   
   if (!envelope.success) {
-    return c.json({ error: "Invalid request body", details: envelope.error.flatten() }, 400);
+    return badRequest(c, "Invalid request body", envelope.error.flatten());
   }
-  
+
   const parsed = validateInputSchema.safeParse(envelope.data.input);
   if (!parsed.success) {
-    return c.json({ error: "Invalid input", details: parsed.error.flatten() }, 400);
+    return badRequest(c, "Invalid input", parsed.error.flatten());
   }
   
   const { agentId, chain, checks } = parsed.data;

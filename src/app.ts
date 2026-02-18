@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { health } from "./routes/health.js";
 import { api } from "./routes/api.js";
@@ -9,6 +9,34 @@ import { skills } from "./agent/skills.js";
 import { TrustGatewayExecutor } from "./agent/executor.js";
 import { createMiddleware } from "hono/factory";
 import type { Config } from "./config.js";
+
+function jsonRpcError(id: string | number | null, code: number, message: string) {
+  return { jsonrpc: "2.0", id, error: { code, message } };
+}
+
+async function parseA2AJsonBody(c: Context) {
+  const contentType = c.req.header("content-type") ?? "";
+  const raw = await c.req.text();
+  if (!raw.trim()) {
+    return { ok: true as const, body: null as unknown };
+  }
+
+  // Accept JSON and +json media types. text/plain is tolerated for compatibility.
+  const acceptsAsJson =
+    contentType === "" ||
+    /(^|;)\s*application\/(?:[\w.+-]+\+)?json\s*(;|$)/i.test(contentType) ||
+    /(^|;)\s*text\/plain\s*(;|$)/i.test(contentType);
+
+  if (!acceptsAsJson) {
+    return { ok: false as const, response: jsonRpcError(null, -32600, "Invalid JSON-RPC Request.") };
+  }
+
+  try {
+    return { ok: true as const, body: JSON.parse(raw) as unknown };
+  } catch {
+    return { ok: false as const, response: jsonRpcError(null, -32700, "Parse error") };
+  }
+}
 
 const PAID_A2A_METHODS = new Set(["message/send", "message/stream"]);
 
@@ -69,15 +97,29 @@ export function createApp(config: Config) {
   app.use(
     "/a2a",
     createMiddleware(async (c, next) => {
-      if (config.bypassPayments) {
+      const parsed = await parseA2AJsonBody(c);
+      if (!parsed.ok) {
+        return c.json(parsed.response);
+      }
+
+      const body = parsed.body;
+      c.set("jsonrpcBody", body);
+
+      if (
+        !body ||
+        typeof body !== "object" ||
+        Array.isArray(body) ||
+        !("method" in body) ||
+        typeof (body as { method?: unknown }).method !== "string"
+      ) {
         await next();
         return;
       }
 
-      const body = await c.req.json();
-      if (PAID_A2A_METHODS.has(body.method)) {
+      if (!config.bypassPayments && PAID_A2A_METHODS.has((body as { method: string }).method)) {
         return paymentMiddleware(c, next);
       }
+
       await next();
     }),
   );
