@@ -8,6 +8,7 @@ import {
   UnauthenticatedUser,
 } from "@a2a-js/sdk/server";
 import type { AgentExecutor } from "@a2a-js/sdk/server";
+import { buildEntrypoints } from "../agent/entrypoints.js";
 
 export function createA2ARoutes(agentCard: AgentCard, executor: AgentExecutor) {
   const taskStore = new InMemoryTaskStore();
@@ -20,10 +21,12 @@ export function createA2ARoutes(agentCard: AgentCard, executor: AgentExecutor) {
 
   const a2a = new Hono();
 
-  // Agent card discovery
+  // Agent card discovery — merges A2A card with structured entrypoints
   a2a.get("/.well-known/agent-card.json", async (c) => {
     const card = await requestHandler.getAgentCard();
-    return c.json(card);
+    const baseUrl = card.url.replace(/\/a2a\/?$/, "");
+    const entrypoints = buildEntrypoints(baseUrl);
+    return c.json({ ...card, entrypoints });
   });
 
   // A2A JSON-RPC endpoint

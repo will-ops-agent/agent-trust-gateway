@@ -16,12 +16,17 @@ const PAID_A2A_METHODS = new Set(["message/send", "message/stream"]);
 const PAID_ENDPOINTS = [
   {
     path: "GET /api/agent/:id/profile",
-    price: "$0.002",
+    price: "$0.001",
+    description: "Fetch agent identity and registration file",
+  },
+  {
+    path: "GET /api/agent/*/profile",
+    price: "$0.001",
     description: "Fetch agent identity and registration file",
   },
   {
     path: "POST /api/agent/profile/invoke",
-    price: "$0.002",
+    price: "$0.001",
     description: "Fetch agent identity (A2A invoke format)",
   },
   {
@@ -64,6 +69,11 @@ export function createApp(config: Config) {
   app.use(
     "/a2a",
     createMiddleware(async (c, next) => {
+      if (config.bypassPayments) {
+        await next();
+        return;
+      }
+
       const body = await c.req.json();
       if (PAID_A2A_METHODS.has(body.method)) {
         return paymentMiddleware(c, next);
@@ -76,6 +86,11 @@ export function createApp(config: Config) {
   app.use(
     "/api/*",
     createMiddleware(async (c, next) => {
+      if (config.bypassPayments) {
+        await next();
+        return;
+      }
+
       const path = c.req.path;
       if (FREE_PATHS.has(path)) {
         await next();

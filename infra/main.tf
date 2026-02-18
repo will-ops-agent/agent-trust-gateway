@@ -98,7 +98,10 @@ resource "aws_secretsmanager_secret_version" "private_key" {
 }
 
 locals {
-  # Maps 1:1 to src/config.ts. AGENT_URL is injected after Function URL creation.
+  # Prefer explicit canonical public domain for agent card URLs when provided.
+  resolved_agent_url = var.public_agent_url != "" ? trimsuffix(var.public_agent_url, "/") : "pending"
+
+  # Maps 1:1 to src/config.ts.
   # Optional vars use merge to avoid passing empty strings (Lambda rejects them).
   env_vars = merge(
     {
@@ -109,12 +112,13 @@ locals {
       FACILITATOR_URL        = var.facilitator_url
       AGENT_NAME             = var.agent_name
       AGENT_DESCRIPTION      = var.agent_description
-      AGENT_URL              = "pending"
+      AGENT_URL              = local.resolved_agent_url
+      BYPASS_PAYMENTS        = var.bypass_payments ? "true" : "false"
     },
     var.agent_provider_name != "" ? { AGENT_PROVIDER_NAME = var.agent_provider_name } : {},
-    var.agent_provider_url  != "" ? { AGENT_PROVIDER_URL  = var.agent_provider_url }  : {},
-    var.agent_docs_url      != "" ? { AGENT_DOCS_URL      = var.agent_docs_url }      : {},
-    var.agent_icon_url      != "" ? { AGENT_ICON_URL      = var.agent_icon_url }      : {},
+    var.agent_provider_url != "" ? { AGENT_PROVIDER_URL = var.agent_provider_url } : {},
+    var.agent_docs_url != "" ? { AGENT_DOCS_URL = var.agent_docs_url } : {},
+    var.agent_icon_url != "" ? { AGENT_ICON_URL = var.agent_icon_url } : {},
   )
 }
 
@@ -150,11 +154,11 @@ resource "aws_lambda_permission" "function_invoke_public" {
   principal     = "*"
 }
 
-# ─── AGENT_URL Injection ───────────────────────────────────────────
-# Lambda needs AGENT_URL for the A2A agent card, but the Function URL
-# doesn't exist until after Lambda is created. We create Lambda with
-# AGENT_URL="pending", then inject the real URL via AWS CLI.
+# AGENT_URL is resolved via local.resolved_agent_url (custom domain if provided).
+# If no custom domain is set, inject Lambda Function URL post-create to avoid Terraform cycles.
 resource "terraform_data" "inject_agent_url" {
+  count = var.public_agent_url == "" ? 1 : 0
+
   triggers_replace = [
     aws_lambda_function_url.agent.function_url,
     var.image_tag,
@@ -162,16 +166,16 @@ resource "terraform_data" "inject_agent_url" {
 
   provisioner "local-exec" {
     interpreter = ["bash", "-c"]
-    command     = <<-EOT
+    command = <<-EOT
       aws lambda update-function-configuration \
         --function-name '${aws_lambda_function.agent.function_name}' \
         --region '${var.aws_region}' \
         --environment '${replace(jsonencode({
-          Variables = merge(local.env_vars, {
-            AGENT_URL = trimsuffix(aws_lambda_function_url.agent.function_url, "/")
-          })
-        }), "'", "'\\''")}' \
+    Variables = merge(local.env_vars, {
+      AGENT_URL = trimsuffix(aws_lambda_function_url.agent.function_url, "/")
+    })
+}), "'", "'\\''")}' \
         --no-cli-pager > /dev/null
     EOT
-  }
+}
 }

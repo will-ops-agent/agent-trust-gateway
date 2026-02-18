@@ -95,3 +95,15 @@ variable "agent_icon_url" {
   type        = string
   default     = ""
 }
+
+variable "public_agent_url" {
+  description = "Canonical public base URL for the agent card + A2A endpoint (optional). Example: https://agent-trust-gateway.port402.com"
+  type        = string
+  default     = ""
+}
+
+variable "bypass_payments" {
+  description = "Bypass x402 payment enforcement for paid endpoints (testing only)"
+  type        = bool
+  default     = false
+}

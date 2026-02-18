@@ -29,8 +29,14 @@ describe("Hono app routes", () => {
     expect(res.status).toBe(200);
     const card = await res.json();
     expect(card.name).toBe("Test Agent");
-    expect(card.skills).toHaveLength(1);
+    expect(card.skills).toHaveLength(3);
     expect(card.url).toContain("/a2a");
+    expect(card.entrypoints).toBeDefined();
+    expect(Object.keys(card.entrypoints)).toEqual(["profile", "score", "validate"]);
+    expect(card.entrypoints.profile.url).toBe("http://localhost:3000/agent/profile/invoke");
+    expect(card.entrypoints.profile.method).toBe("POST");
+    expect(card.entrypoints.score.pricing).toEqual({ invoke: "0.01" });
+    expect(card.entrypoints.validate.input_schema.properties.checks).toBeDefined();
   });
 
   it("GET /api/hello without payment returns 402", async () => {

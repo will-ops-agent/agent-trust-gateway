@@ -26,12 +26,20 @@ export function createPaymentMiddleware(config: Config, routes: RoutePrice[]) {
     string,
     {
       accepts: { scheme: string; price: string; network: Network; payTo: string };
+      resource?: string;
       description: string;
       mimeType: string;
     }
   > = {};
 
+  const canonicalBase = config.agentUrl.replace(/\/$/, "");
+
   for (const route of routes) {
+    const pathPattern = route.path.split(" ")[1] || "";
+    const canonicalPath = pathPattern
+      .replace(/:([A-Za-z0-9_]+)/g, "{$1}")
+      .replace(/\*/g, "{wildcard}");
+
     routeConfig[route.path] = {
       accepts: {
         scheme: "exact",
@@ -39,6 +47,7 @@ export function createPaymentMiddleware(config: Config, routes: RoutePrice[]) {
         network,
         payTo: config.walletAddress,
       },
+      resource: `${canonicalBase}${canonicalPath}`,
       description: route.description,
       mimeType: "application/json",
     };

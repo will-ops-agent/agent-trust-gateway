@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { createPublicClient, http, type Address, type Chain } from "viem";
+import { createPublicClient, http, fallback, type Address, type Chain } from "viem";
 import { base, baseSepolia, mainnet, sepolia } from "viem/chains";
 import { IdentityClient, ReputationClient, ViemAdapter } from "erc-8004-js";
 
@@ -11,28 +11,28 @@ const IDENTITY_REGISTRY_TESTNET = "0x8004A818BFB912233c491871b3d84c89A494BD9e" a
 const REPUTATION_REGISTRY_TESTNET = "0x8004B663056A597Dffe9eCcC1965A193B7388713" as Address;
 
 // Chain configs
-const CHAINS: Record<string, { chain: Chain; rpc: string; identityRegistry: Address; reputationRegistry: Address }> = {
+const CHAINS: Record<string, { chain: Chain; rpcs: string[]; identityRegistry: Address; reputationRegistry: Address }> = {
   base: {
     chain: base,
-    rpc: process.env.BASE_RPC_URL || "https://mainnet.base.org",
+    rpcs: [process.env.BASE_RPC_URL || "https://mainnet.base.org", "https://base.llamarpc.com"],
     identityRegistry: IDENTITY_REGISTRY_MAINNET,
     reputationRegistry: REPUTATION_REGISTRY_MAINNET,
   },
   "base-sepolia": {
     chain: baseSepolia,
-    rpc: process.env.BASE_SEPOLIA_RPC_URL || "https://sepolia.base.org",
+    rpcs: [process.env.BASE_SEPOLIA_RPC_URL || "https://sepolia.base.org", "https://base-sepolia-rpc.publicnode.com"],
     identityRegistry: IDENTITY_REGISTRY_TESTNET,
     reputationRegistry: REPUTATION_REGISTRY_TESTNET,
   },
   ethereum: {
     chain: mainnet,
-    rpc: process.env.ETH_RPC_URL || "https://eth.llamarpc.com",
+    rpcs: [process.env.ETH_RPC_URL || "https://eth.llamarpc.com", "https://ethereum-rpc.publicnode.com"],
     identityRegistry: IDENTITY_REGISTRY_MAINNET,
     reputationRegistry: REPUTATION_REGISTRY_MAINNET,
   },
   sepolia: {
     chain: sepolia,
-    rpc: process.env.SEPOLIA_RPC_URL || "https://rpc.sepolia.org",
+    rpcs: [process.env.SEPOLIA_RPC_URL || "https://rpc.sepolia.org", "https://ethereum-sepolia-rpc.publicnode.com"],
     identityRegistry: IDENTITY_REGISTRY_TESTNET,
     reputationRegistry: REPUTATION_REGISTRY_TESTNET,
   },
@@ -93,9 +93,11 @@ async function fetchRegistrationFile(identity: IdentityClient, agentId: bigint):
 function createClients(chainName: string = DEFAULT_CHAIN) {
   const config = CHAINS[chainName] || CHAINS[DEFAULT_CHAIN];
   
+  const transports = config.rpcs.filter(Boolean).map((rpc) => http(rpc, { retryCount: 2 }));
+
   const publicClient = createPublicClient({
     chain: config.chain,
-    transport: http(config.rpc),
+    transport: transports.length > 1 ? fallback(transports) : transports[0],
   });
   
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -138,7 +140,7 @@ api.get("/health", (c) => c.json({ ok: true, service: "agent-trust-gateway" }));
 /**
  * GET /agent/:id/profile
  * Fetch agent identity and registration file
- * Price: $0.002
+ * Price: $0.001
  */
 api.get("/agent/:id/profile", async (c) => {
   const agentIdParam = c.req.param("id");
@@ -185,7 +187,7 @@ api.get("/agent/:id/profile", async (c) => {
 /**
  * POST /agent/profile/invoke
  * A2A-compatible wrapper for profile endpoint
- * Price: $0.002
+ * Price: $0.001
  */
 api.post("/agent/profile/invoke", async (c) => {
   const body = await c.req.json().catch(() => null);
@@ -259,17 +261,16 @@ api.post("/agent/score/invoke", async (c) => {
     
     // Get basic profile info
     const registrationFile = await fetchRegistrationFile(identity, agentId);
-    const owner = await identity.getOwner(agentId);
-    
-    // Get reputation summary
-    const summary = await reputation.getSummary(agentId);
-    
-    // Get all feedback for detailed analysis
-    const allFeedback = await reputation.readAllFeedback(agentId);
-    
-    // Compute trust vector components
-    const feedbackCount = Number(summary.count);
-    const avgScore = summary.averageScore;
+
+    // Get all feedback and compute summary locally.
+    // Some registry deployments revert on getSummary when clientAddresses is empty.
+    const allFeedback = await readFeedbackSafe(reputation, agentId);
+
+    const feedbackCount = allFeedback.scores.length;
+    const avgScore =
+      feedbackCount > 0
+        ? allFeedback.scores.reduce((sum, s) => sum + s, 0) / feedbackCount
+        : 0;
     
     // Identity maturity: based on registration age, metadata completeness
     const hasEndpoints = (registrationFile.endpoints?.length || 0) > 0;
@@ -312,6 +313,7 @@ api.post("/agent/score/invoke", async (c) => {
           count: feedbackCount,
           averageScore: Math.round(avgScore * 10) / 10,
           uniqueClients: new Set(allFeedback.clientAddresses).size,
+          warning: allFeedback.warning,
         },
         agentName: registrationFile.name,
       },
@@ -433,11 +435,15 @@ api.post("/agent/validate/invoke", async (c) => {
     if (checks.includes("attestations") && registrationFile.supportedTrust) {
       for (const trustType of registrationFile.supportedTrust) {
         if (trustType === "reputation") {
-          const summary = await reputation.getSummary(agentId);
+          const feedback = await readFeedbackSafe(reputation, agentId);
+          const count = feedback.scores.length;
+          const average = count > 0 ? feedback.scores.reduce((sum, s) => sum + s, 0) / count : 0;
           validationReport.attestations.push({
             type: "reputation",
-            status: Number(summary.count) > 0 ? "active" : "no-feedback",
-            details: `${summary.count} feedbacks, avg score: ${Math.round(summary.averageScore)}`,
+            status: count > 0 ? "active" : "no-feedback",
+            details: feedback.warning
+              ? `feedback unavailable: ${feedback.warning}`
+              : `${count} feedbacks, avg score: ${Math.round(average)}`,
           });
         } else if (trustType === "tee-attestation") {
           // TEE attestations would require additional verification
@@ -489,6 +495,22 @@ api.post("/agent/validate/invoke", async (c) => {
     return c.json({ error: "Failed to validate agent", details: message }, 500);
   }
 });
+
+async function readFeedbackSafe(
+  reputation: ReputationClient,
+  agentId: bigint,
+): Promise<{ scores: number[]; clientAddresses: string[]; warning?: string }> {
+  try {
+    const feedback = await reputation.readAllFeedback(agentId);
+    return {
+      scores: Array.isArray(feedback.scores) ? feedback.scores : [],
+      clientAddresses: Array.isArray(feedback.clientAddresses) ? feedback.clientAddresses : [],
+    };
+  } catch (error) {
+    const warning = error instanceof Error ? error.message : "Failed to read feedback";
+    return { scores: [], clientAddresses: [], warning };
+  }
+}
 
 // Helper function to compute variance of scores
 function computeVariance(scores: number[]): number {

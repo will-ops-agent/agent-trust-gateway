@@ -15,6 +15,7 @@ export interface Config {
   agentProviderUrl?: string;
   agentDocsUrl?: string;
   agentIconUrl?: string;
+  bypassPayments: boolean;
 }
 
 function required(name: string): string {
@@ -50,12 +51,13 @@ export async function loadConfig(): Promise<Config> {
     facilitatorUrl: process.env.FACILITATOR_URL ?? "https://www.x402.org/facilitator",
     agentName: process.env.AGENT_NAME ?? "Hello Agent",
     agentDescription: process.env.AGENT_DESCRIPTION ?? "A simple Hello World agent",
-    agentUrl: process.env.AGENT_URL ?? "http://localhost:3000",
+    agentUrl: process.env.AGENT_URL ?? "https://agent-trust-gateway.port402.com",
     port: parseInt(process.env.PORT ?? "3000", 10),
     pinataJwt: process.env.PINATA_JWT,
     agentProviderName: process.env.AGENT_PROVIDER_NAME,
     agentProviderUrl: process.env.AGENT_PROVIDER_URL,
     agentDocsUrl: process.env.AGENT_DOCS_URL,
     agentIconUrl: process.env.AGENT_ICON_URL,
+    bypassPayments: process.env.BYPASS_PAYMENTS === "true",
   };
 }

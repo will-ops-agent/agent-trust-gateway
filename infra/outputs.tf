@@ -5,7 +5,7 @@ output "function_url" {
 
 output "agent_card_url" {
   description = "A2A agent card discovery URL"
-  value       = "${trimsuffix(aws_lambda_function_url.agent.function_url, "/")}/.well-known/agent-card.json"
+  value       = "https://agent-trust-gateway.port402.com/.well-known/agent-card.json"
 }
 
 output "function_name" {

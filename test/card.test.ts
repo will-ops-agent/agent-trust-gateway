@@ -26,8 +26,12 @@ describe("buildAgentCard", () => {
 
   it("includes skills", () => {
     const card = buildAgentCard(testConfig, skills);
-    expect(card.skills).toHaveLength(1);
-    expect(card.skills[0].id).toBe("hello");
+    expect(card.skills).toHaveLength(3);
+    expect(card.skills.map((s) => s.id)).toEqual([
+      "agent-profile",
+      "trust-score",
+      "validate-agent",
+    ]);
   });
 
   it("disables streaming for Lambda compatibility", () => {
