@@ -65,28 +65,57 @@ function parseDataUri(uri: string): Record<string, unknown> | null {
   }
 }
 
+class RegistrationFileError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "RegistrationFileError";
+    this.status = status;
+  }
+}
+
 // Helper to fetch registration file (handles data: URIs)
 async function fetchRegistrationFile(identity: IdentityClient, agentId: bigint): Promise<RegistrationFile> {
   const tokenUri = await identity.getTokenURI(agentId);
-  
+
   // Handle data: URI
   const dataUriResult = parseDataUri(tokenUri);
   if (dataUriResult) {
     return dataUriResult as unknown as RegistrationFile;
   }
-  
+
   // Handle IPFS or HTTPS
-  let fetchUrl = tokenUri;
+  const fetchUrls: string[] = [];
   if (tokenUri.startsWith("ipfs://")) {
     const cid = tokenUri.replace("ipfs://", "");
-    fetchUrl = `https://ipfs.io/ipfs/${cid}`;
+    fetchUrls.push(
+      `https://ipfs.io/ipfs/${cid}`,
+      `https://cloudflare-ipfs.com/ipfs/${cid}`,
+      `https://dweb.link/ipfs/${cid}`,
+    );
+  } else {
+    fetchUrls.push(tokenUri);
   }
-  
-  const response = await fetch(fetchUrl);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch registration file: ${response.status}`);
+
+  let lastStatus = 500;
+  for (const fetchUrl of fetchUrls) {
+    const response = await fetch(fetchUrl).catch(() => null);
+    if (!response) {
+      lastStatus = 502;
+      continue;
+    }
+
+    if (response.ok) {
+      return response.json() as Promise<RegistrationFile>;
+    }
+
+    lastStatus = response.status;
+    // For 404 on IPFS gateway, continue trying fallback gateways.
+    if (response.status === 404) continue;
   }
-  return response.json() as Promise<RegistrationFile>;
+
+  throw new RegistrationFileError(`Failed to fetch registration file: ${lastStatus}`, lastStatus);
 }
 
 // Helper to create clients
@@ -147,8 +176,25 @@ function badRequest(c: { json: (body: unknown, status?: number) => Response }, e
   return c.json(errorBody(error, details), 400);
 }
 
+function notFound(c: { json: (body: unknown, status?: number) => Response }, error: string, details?: unknown) {
+  return c.json(errorBody(error, details), 404);
+}
+
 function internalError(c: { json: (body: unknown, status?: number) => Response }, error: string, details?: unknown) {
   return c.json(errorBody(error, details), 500);
+}
+
+function endpointError(
+  c: { json: (body: unknown, status?: number) => Response },
+  errorMessage: string,
+  error: unknown,
+) {
+  if (error instanceof RegistrationFileError && error.status === 404) {
+    return notFound(c, errorMessage, "Agent registration metadata not found (token URI unresolved)");
+  }
+
+  const message = error instanceof Error ? error.message : "Unknown error";
+  return internalError(c, errorMessage, message);
 }
 
 function parseAgentIdParam(agentIdParam: string) {
@@ -216,8 +262,7 @@ api.get("/agent/:id/profile", async (c) => {
       registrations: registrationFile.registrations || [],
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    return internalError(c, "Failed to fetch agent profile", message);
+    return endpointError(c, "Failed to fetch agent profile", error);
   }
 });
 
@@ -268,8 +313,7 @@ api.post("/agent/profile/invoke", async (c) => {
       },
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    return internalError(c, "Failed to fetch agent profile", message);
+    return endpointError(c, "Failed to fetch agent profile", error);
   }
 });
 
@@ -356,8 +400,7 @@ api.post("/agent/score/invoke", async (c) => {
       },
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    return internalError(c, "Failed to compute trust score", message);
+    return endpointError(c, "Failed to compute trust score", error);
   }
 });
 
@@ -528,8 +571,7 @@ api.post("/agent/validate/invoke", async (c) => {
       },
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    return c.json({ error: "Failed to validate agent", details: message }, 500);
+    return endpointError(c, "Failed to validate agent", error);
   }
 });
 
