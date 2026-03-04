@@ -80,12 +80,18 @@ async function applyAgentMetadata(
   agent.addDomain("technology/blockchain/smart_contracts", true);
 
   // Custom service entries (no SDK method — push directly to endpoints)
-  const endpoints = (agent as any).registrationFile.endpoints;
-  endpoints.push(
+  const customEntries = [
     { type: "web", value: config.agentUrl },
     { type: "API", value: config.agentUrl + "/api", meta: { version: "1.0.0" } },
     { type: "docs", value: "https://github.com/port402/agent-trust-gateway" },
+  ];
+  const customTypes = new Set(customEntries.map((e) => e.type));
+  const endpoints = (agent as any).registrationFile.endpoints;
+  // Remove existing entries with matching types to avoid duplicates on re-registration
+  (agent as any).registrationFile.endpoints = endpoints.filter(
+    (e: { type?: string; name?: string }) => !customTypes.has(e.type ?? e.name ?? ""),
   );
+  (agent as any).registrationFile.endpoints.push(...customEntries);
 
   let imageCID: string | undefined;
   if (opts?.imagePath && config.pinataJwt) {
